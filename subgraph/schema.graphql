@@ -1,0 +1,13 @@
+type Event @entity {
+  id: ID!
+  contractAddress: String!
+  eventSignature: String!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: String!
+  logIndex: BigInt!
+  data: String!
+  topics: [String!]!
+  decodedData: String
+  createdAt: BigInt!
+} 
