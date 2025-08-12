@@ -13,7 +13,13 @@ export default async function handler(req, res) {
       return res.status(400).json({ message: 'Missing required fields: walletAddress and icNumber' });
     }
 
-    const filePath = path.resolve(process.cwd(), 'users.json');
+    const filePath = path.resolve(process.cwd(), 'data/users.json');
+
+    // Ensure data directory exists
+    const dataDir = path.dirname(filePath);
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
 
     let users = [];
     if (fs.existsSync(filePath)) {

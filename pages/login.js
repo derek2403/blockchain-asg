@@ -1,14 +1,40 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAccount } from 'wagmi';
+import { useRouter } from 'next/router';
 
 export default function Login() {
   const { address, isConnected } = useAccount();
+  const router = useRouter();
   const [imagePreview, setImagePreview] = useState(null);
   const [mimeType, setMimeType] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
   const [saveMessage, setSaveMessage] = useState('');
+
+  // Check if user already exists and redirect if found
+  useEffect(() => {
+    if (isConnected && address) {
+      const checkExistingUser = async () => {
+        try {
+          const response = await fetch('/api/check-user', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ walletAddress: address }),
+          });
+
+          const data = await response.json();
+          if (data.exists) {
+            router.push('/home');
+          }
+        } catch (error) {
+          console.error('Error checking existing user:', error);
+        }
+      };
+
+      checkExistingUser();
+    }
+  }, [isConnected, address, router]);
 
   function handleFileChange(event) {
     setError('');
@@ -83,7 +109,12 @@ export default function Login() {
       if (!resp.ok) {
         throw new Error(data?.message || 'Failed to save user');
       }
-      setSaveMessage('Saved successfully.');
+      setSaveMessage('Saved successfully. Redirecting to home...');
+      
+      // Redirect to home after successful save
+      setTimeout(() => {
+        router.push('/home');
+      }, 1500);
     } catch (e) {
       setError(e.message);
     } finally {
