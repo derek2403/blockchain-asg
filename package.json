@@ -10,7 +10,11 @@
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "@oasisprotocol/sapphire-ethers-v6": "^6.0.1",
+    "@oasisprotocol/sapphire-paratime": "^2.2.0",
     "@rainbow-me/rainbowkit": "^2.2.8",
+    "ethers": "^6.15.0",
+    "formidable": "^3.5.4",
     "next": "15.4.6",
     "react": "19.1.0",
     "react-dom": "19.1.0",
