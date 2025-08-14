@@ -2,8 +2,9 @@
   {
     "idHex": "B9F4B5",
     "images": [
-      "/img/B9F4B5/1755134459263_pexels-binyaminmellish-106399.jpg"
+      "/img/B9F4B5/1755139615500_pexels-binyaminmellish-106399.jpg"
     ],
-    "housingValue": "100000"
+    "housingValue": "100000",
+    "tokenAddress": "0x830f5D85C626Ff6eCeb4e829848aCa511F27c7fa"
   }
 ]

@@ -3,11 +3,11 @@ import fs from "fs/promises";
 import path from "path";
 
 export const config = {
-  api: { bodyParser: false }, // we handle multipart via formidable
+  api: { bodyParser: false }, // we handle multipart via formidable; JSON for PUT is fine (we’ll sniff method)
 };
 
 const ID_FILE = path.join(process.cwd(), "data", "id.json");
-// Per your spec: save under /img/<ID>/<filename>
+// Save under /img/<ID>/<filename>
 const IMG_ROOT = path.join(process.cwd(), "img");
 
 // -------------- helpers --------------
@@ -31,19 +31,23 @@ async function readEntries() {
   }
   if (!Array.isArray(arr)) arr = [];
 
-  // Normalize: support legacy array of strings
+  // Normalize legacy shapes
   const norm = arr.map((x) => {
     if (typeof x === "string") {
-      return { idHex: x.toUpperCase(), images: [], housingValue: "" };
+      return { idHex: x.toUpperCase(), images: [], housingValue: "", tokenAddress: "" };
     }
     return {
       idHex: String(x?.idHex || x?.id || "").toUpperCase(),
       images: Array.isArray(x?.images) ? x.images : [],
-      housingValue: typeof x?.housingValue === "string" || typeof x?.housingValue === "number" ? String(x.housingValue) : "",
+      housingValue:
+        typeof x?.housingValue === "string" || typeof x?.housingValue === "number"
+          ? String(x.housingValue)
+          : "",
+      tokenAddress: typeof x?.tokenAddress === "string" ? x.tokenAddress : "",
     };
   });
 
-  // Drop invalid entries
+  // Keep only valid ids
   return norm.filter((e) => /^[0-9A-F]{6}$/.test(e.idHex));
 }
 
@@ -67,12 +71,53 @@ function parseForm(req) {
   });
 }
 
+function isHexAddress(s = "") {
+  return /^0x[0-9a-fA-F]{40}$/.test(s);
+}
+
 // -------------- handler --------------
 export default async function handler(req, res) {
   try {
     if (req.method === "GET") {
       const entries = await readEntries();
       return res.status(200).json({ properties: entries });
+    }
+
+    // Update tokenAddress only (client calls this after mint)
+    if (req.method === "PUT") {
+      const body = await new Promise((resolve, reject) => {
+        let data = "";
+        req.on("data", (chunk) => (data += chunk));
+        req.on("end", () => {
+          try {
+            resolve(JSON.parse(data || "{}"));
+          } catch (e) {
+            reject(e);
+          }
+        });
+      });
+
+      const idHex = String(body.idHex || "").toUpperCase().trim();
+      const tokenAddress = String(body.tokenAddress || "").trim();
+
+      if (!/^[0-9A-F]{6}$/.test(idHex)) {
+        return res.status(400).json({ error: "idHex must be 6 hex digits (e.g., A1B2C3)" });
+      }
+      if (!isHexAddress(tokenAddress)) {
+        return res.status(400).json({ error: "tokenAddress must be a valid hex address" });
+      }
+
+      const entries = await readEntries();
+      let entry = entries.find((e) => e.idHex === idHex);
+      if (!entry) {
+        // create minimal entry if not exists
+        entry = { idHex, images: [], housingValue: "", tokenAddress };
+        entries.push(entry);
+      } else {
+        entry.tokenAddress = tokenAddress;
+      }
+      await writeEntries(entries);
+      return res.status(200).json({ ok: true, idHex, tokenAddress });
     }
 
     if (req.method === "POST") {
@@ -95,7 +140,7 @@ export default async function handler(req, res) {
       const entries = await readEntries();
       let entry = entries.find((e) => e.idHex === idHex);
       if (!entry) {
-        entry = { idHex, images: [], housingValue: "" };
+        entry = { idHex, images: [], housingValue: "", tokenAddress: "" };
         entries.push(entry);
       }
 
@@ -107,17 +152,13 @@ export default async function handler(req, res) {
         const orig = sanitizeFilename(f.originalFilename || "image");
         const filename = `${Date.now()}_${orig}`;
         const destPath = path.join(IMG_ROOT, idHex, filename);
-
-        // Move/copy temp file to destination
         await fs.copyFile(f.filepath, destPath);
 
-        // Store the relative path exactly as requested
         const rel = `/img/${idHex}/${filename}`;
         entry.images.push(rel);
         savedPaths.push(rel);
       }
 
-      // Save housing value if provided
       if (housingValue) entry.housingValue = housingValue;
 
       await writeEntries(entries);
@@ -127,6 +168,7 @@ export default async function handler(req, res) {
         idHex,
         saved: savedPaths,
         housingValue: entry.housingValue,
+        tokenAddress: entry.tokenAddress || "",
       });
     }
 
