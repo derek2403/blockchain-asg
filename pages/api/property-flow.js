@@ -1,4 +1,3 @@
-// pages/api/property-flow.js
 import formidable from "formidable";
 import fs from "fs/promises";
 import path from "path";
@@ -33,9 +32,31 @@ function encryptAesGcm(plaintext, keyB64) {
 }
 
 // Generate 6-hex-digit ID from plaintext (deterministic)
+// (Kept for reference; not used for final ID generation anymore)
 function id6HexFromPlaintext(plaintext) {
   const hashHex = crypto.createHash("sha256").update(plaintext, "utf8").digest("hex");
   return hashHex.slice(0, 6).toUpperCase().padStart(6, "0");
+}
+
+// NEW: Generate a **unique** 6-hex ID (salted + collision-checked)
+async function generateUniqueIdHex(plaintext) {
+  const existing = new Set((await readEntries()).map((e) => e.idHex));
+
+  // Try salted-hash candidates tied to the deed data (50 attempts)
+  for (let i = 0; i < 50; i++) {
+    const salt = crypto.randomBytes(8).toString("hex"); // 64 bits randomness
+    const hashHex = crypto.createHash("sha256").update(`${plaintext}:${salt}`, "utf8").digest("hex");
+    const candidate = hashHex.slice(0, 6).toUpperCase();
+    if (!existing.has(candidate)) return candidate;
+  }
+
+  // Fallback: random 24-bit (100 attempts)
+  for (let i = 0; i < 100; i++) {
+    const candidate = crypto.randomBytes(3).toString("hex").toUpperCase();
+    if (!existing.has(candidate)) return candidate;
+  }
+
+  throw new Error("Could not generate unique idHex");
 }
 
 // Convert 6-hex-digit to decimal string for on-chain
@@ -291,8 +312,8 @@ Rules:
       // Encrypt data
       const encrypted = encryptAesGcm(plaintext, requireEnv("ENCRYPTION_KEY_BASE64"));
 
-      // Generate property ID
-      const idHex = id6HexFromPlaintext(plaintext);
+      // === CHANGED: generate a **unique** 6-hex id ===
+      const idHex = await generateUniqueIdHex(plaintext);
       const id = idDecFromHex6(idHex);
 
       return res.status(200).json({

@@ -196,8 +196,9 @@ export default function PropertyFlowPage() {
       fd.append("image", deedFile);
       fd.append("owner", account);
 
-      const res = await fetch("/api/parse-property", { 
+      const res = await fetch("/api/property-flow", { 
         method: "POST", 
+        headers: { "x-action": "parse-deed" },
         body: fd
       });
       
@@ -235,10 +236,10 @@ export default function PropertyFlowPage() {
 
       // Save ID to backend
       setStatus("Saving property record...");
-      const saveRes = await fetch("/api/parse-property", {
+      const saveRes = await fetch("/api/property-flow", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ saveId: true, idHex }),
+        headers: { "Content-Type": "application/json", "x-action": "save-id" },
+        body: JSON.stringify({ idHex, owner: account }),
       });
       
       if (!saveRes.ok) {
