@@ -1,5 +1,13 @@
+// pages/upload.js
 import { useEffect, useMemo, useState } from "react";
-import { BrowserProvider, Contract, Interface, ZeroAddress, isAddress } from "ethers";
+import {
+  BrowserProvider,
+  Contract,
+  Interface,
+  ZeroAddress,
+  isAddress,
+  formatUnits,
+} from "ethers";
 
 const SAPPHIRE_TESTNET = {
   chainId: "0x5aff", // 23295
@@ -13,7 +21,68 @@ const FACTORY_ADDRESS =
   process.env.NEXT_PUBLIC_FACTORY_ADDRESS ||
   "0x00cAe9ED35dCdf0F5C14c5EC11797E8c4d3dBB52";
 
-// Minimal PropertyTokenFactory ABI
+/** ====== VAULT CONFIG ====== */
+const VAULT_ADDRESS =
+  process.env.NEXT_PUBLIC_VAULT_ADDRESS ||
+  "0xe7533E80B13e34092873257Af615A0A72a3A8367";
+
+/** Vault ABI (only what we need) */
+const VAULT_ABI = [
+  {
+    inputs: [
+      { internalType: "address", name: "owner", type: "address" },
+      { internalType: "address", name: "token", type: "address" },
+      { internalType: "uint256", name: "housingValue", type: "uint256" },
+      { internalType: "uint256", name: "amountTokens", type: "uint256" },
+    ],
+    name: "depositTokens",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  // Optional: let us re-fetch the listing after deposit (nice to show success context)
+  {
+    inputs: [{ internalType: "address", name: "token", type: "address" }],
+    name: "getListing",
+    outputs: [
+      { internalType: "address", name: "owner", type: "address" },
+      { internalType: "uint8", name: "decimals_", type: "uint8" },
+      { internalType: "uint256", name: "housingValue", type: "uint256" },
+      { internalType: "uint256", name: "remainingUnits", type: "uint256" },
+      { internalType: "bool", name: "active", type: "bool" },
+    ],
+    stateMutability: "view",
+    type: "function",
+  },
+];
+
+/** Minimal ERC20 ABI */
+const ERC20_ABI = [
+  { inputs: [], name: "decimals", outputs: [{ internalType: "uint8", name: "", type: "uint8" }], stateMutability: "view", type: "function" },
+  { inputs: [{ internalType: "address", name: "account", type: "address" }], name: "balanceOf", outputs: [{ internalType: "uint256", name: "", type: "uint256" }], stateMutability: "view", type: "function" },
+  {
+    inputs: [
+      { internalType: "address", name: "owner", type: "address" },
+      { internalType: "address", name: "spender", type: "address" },
+    ],
+    name: "allowance",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [
+      { internalType: "address", name: "spender", type: "address" },
+      { internalType: "uint256", name: "value", type: "uint256" },
+    ],
+    name: "approve",
+    outputs: [{ internalType: "bool", name: "", type: "bool" }],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+];
+
+/** PropertyTokenFactory ABI (minimal) */
 const FACTORY_ABI = [
   { inputs: [], name: "AlreadyMinted", type: "error" },
   { inputs: [], name: "InvalidHexString", type: "error" },
@@ -55,7 +124,7 @@ export default function UploadPage() {
   const [loading, setLoading] = useState(true);
   const [ids, setIds] = useState([]);
   const [idHex, setIdHex] = useState("");
-  const [owner, setOwner] = useState(""); // NEW: connected wallet
+  const [owner, setOwner] = useState("");
   const [housingValue, setHousingValue] = useState("");
   const [files, setFiles] = useState([]);
   const [status, setStatus] = useState("");
@@ -63,6 +132,7 @@ export default function UploadPage() {
   const [error, setError] = useState("");
   const [mintTx, setMintTx] = useState("");
   const [tokenAddress, setTokenAddress] = useState("");
+  const [depositTx, setDepositTx] = useState("");
 
   const idUpper = useMemo(() => (idHex || "").toUpperCase(), [idHex]);
 
@@ -131,6 +201,7 @@ export default function UploadPage() {
     return { provider, signer, addr };
   }
 
+  /** Mint the token if needed; persist tokenAddress + owner; return token address */
   async function mintAndPersistToken(idHex6, addr) {
     setStatus("Minting ERC20 (100 tokens)...");
     setMintTx("");
@@ -140,14 +211,13 @@ export default function UploadPage() {
     await provider.send("eth_requestAccounts", []);
     const signer = await provider.getSigner();
 
-    // Check if already minted
+    // If already minted, reuse
     try {
       const read = new Contract(FACTORY_ADDRESS, FACTORY_ABI, provider);
       const existing = await read.tokenOf(idHex6);
       if (existing && existing !== ZeroAddress) {
         setStatus("Token already exists for this ID. Skipping mint.");
         setTokenAddress(existing);
-        // Update id.json with existing address + owner
         await fetch("/api/upload", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -156,7 +226,7 @@ export default function UploadPage() {
         return existing;
       }
     } catch {
-      // continue
+      // ignore read error, try mint
     }
 
     const factory = new Contract(FACTORY_ADDRESS, FACTORY_ABI, signer);
@@ -164,14 +234,12 @@ export default function UploadPage() {
     setMintTx(tx.hash);
     const receipt = await tx.wait();
 
-    // Try mapping
+    // Get address from mapping, fallback to event
+    const read = new Contract(FACTORY_ADDRESS, FACTORY_ABI, provider);
     let mintedAddr = ZeroAddress;
     try {
-      const read = new Contract(FACTORY_ADDRESS, FACTORY_ABI, provider);
       mintedAddr = await read.tokenOf(idHex6);
     } catch {}
-
-    // Fallback: parse event
     if (!mintedAddr || mintedAddr === ZeroAddress) {
       try {
         const iface = new Interface(FACTORY_ABI);
@@ -186,14 +254,13 @@ export default function UploadPage() {
         }
       } catch {}
     }
-
     if (!mintedAddr || mintedAddr === ZeroAddress) {
       throw new Error("Mint succeeded, but token address not found.");
     }
 
     setTokenAddress(mintedAddr);
 
-    // Persist token address + owner
+    // Save token address + owner into id.json
     setStatus("Saving token address to id.json…");
     const r = await fetch("/api/upload", {
       method: "PUT",
@@ -204,6 +271,61 @@ export default function UploadPage() {
 
     setStatus("Saved & minted ✅");
     return mintedAddr;
+  }
+
+  /** Approve full balance to VAULT and deposit all as whole tokens */
+  async function approveAndDepositAllToVault(tokenAddr, ownerAddr, hvString) {
+    setDepositTx("");
+
+    const provider = new BrowserProvider(window.ethereum);
+    const signer = await provider.getSigner();
+
+    const erc20 = new Contract(tokenAddr, ERC20_ABI, signer);
+    const decimals = Number(await erc20.decimals());
+    const bal = BigInt(await erc20.balanceOf(ownerAddr).then(b => b.toString()));
+    if (bal === 0n) {
+      setStatus("You have 0 balance to deposit. Skipping deposit.");
+      return null;
+    }
+
+    // Ensure allowance
+    const allowance = BigInt(await erc20.allowance(ownerAddr, VAULT_ADDRESS).then(a => a.toString()));
+    if (allowance < bal) {
+      setStatus("Approving vault to spend your tokens…");
+      const txA = await erc20.approve(VAULT_ADDRESS, bal);
+      await txA.wait();
+    }
+
+    // Convert raw balance -> whole tokens
+    const pow10 = (d) => (BigInt(10) ** BigInt(d));
+    const wholeTokens = bal / pow10(decimals);
+    if (wholeTokens === 0n) {
+      setStatus("Not enough for 1 whole token after decimals. Skipping deposit.");
+      return null;
+    }
+
+    const hv = BigInt((hvString || "0").trim() || "0");
+    const vault = new Contract(VAULT_ADDRESS, VAULT_ABI, signer);
+
+    setStatus(`Depositing ${wholeTokens.toString()} tokens into the vault…`);
+    const tx = await vault.depositTokens(ownerAddr, tokenAddr, hv, wholeTokens);
+    const rc = await tx.wait();
+    setDepositTx(rc.hash);
+    setStatus(`Deposited ${wholeTokens.toString()} tokens. Tx: ${rc.hash}`);
+
+    // Optional: read back listing
+    try {
+      const providerRO = new BrowserProvider(window.ethereum);
+      const vaultRO = new Contract(VAULT_ADDRESS, VAULT_ABI, providerRO);
+      const lst = await vaultRO.getListing(tokenAddr);
+      const rem = lst?.remainingUnits?.toString?.() || "0";
+      setStatus(
+        `Deposit complete. Remaining units in vault: ${rem}. Tx: ${rc.hash}`
+      );
+    } catch {
+      // ignore
+    }
+    return rc.hash;
   }
 
   const submit = async (e) => {
@@ -219,14 +341,16 @@ export default function UploadPage() {
       setError("");
       setMintTx("");
       setTokenAddress("");
+      setDepositTx("");
 
       await ensureSapphire();
       const { addr } = await getConnectedAddress();
 
+      // 1) Save images + HV (and write owner)
       setStatus("Uploading…");
       const fd = new FormData();
       fd.append("idHex", idUpper);
-      fd.append("owner", addr); // NEW
+      fd.append("owner", addr);
       fd.append("housingValue", housingValue.trim());
       for (const f of files.slice(0, 3)) fd.append("images", f);
 
@@ -235,16 +359,21 @@ export default function UploadPage() {
       const data = await res.json();
       setResult(data);
 
-      // Auto-mint AFTER save
+      // 2) Mint (or reuse) token address, persist in id.json
       setStatus("Minting token…");
-      await mintAndPersistToken(idUpper, addr);
+      const tokenAddr = await mintAndPersistToken(idUpper, addr);
 
-      // refresh IDs
+      // 3) Immediately approve + deposit ALL to the vault
+      const hvForDeposit = String(data?.housingValue ?? housingValue.trim() ?? "0");
+      setStatus("Approving & depositing to vault…");
+      await approveAndDepositAllToVault(tokenAddr, addr, hvForDeposit);
+
+      // Refresh IDs for the dropdown
       loadIds();
     } catch (e2) {
       console.error(e2);
       setStatus("");
-      setError(e2.message || "Upload/mint failed");
+      setError(e2.message || "Upload/mint/deposit failed");
     }
   };
 
@@ -253,8 +382,8 @@ export default function UploadPage() {
       <h1>Upload Images & Housing Value</h1>
       <p style={{ marginTop: 0, opacity: 0.8 }}>
         Select a property ID from <code>data/id.json</code>, upload up to <strong>3 images</strong>,
-        and/or enter a housing value. Images are saved under <code>/img/&lt;ID&gt;/filename</code>.
-        After saving, this page auto-mints a 100-supply ERC-20 (name/symbol = the 6-hex ID) and stores its address and your wallet as <code>owner</code> in <code>data/id.json</code>.
+        and/or enter a housing value. After saving, this page will <b>auto-mint</b> a 100-supply ERC-20
+        and then <b>auto-deposit your entire balance to the Vault</b>.
       </p>
 
       <div style={{ margin: "12px 0" }}>
@@ -315,7 +444,7 @@ export default function UploadPage() {
         </label>
 
         <button type="submit" disabled={loading || !idHex}>
-          Save & Mint
+          Save, Mint & Deposit to Vault
         </button>
       </form>
 
@@ -325,7 +454,7 @@ export default function UploadPage() {
         </p>
       )}
 
-      {(mintTx || tokenAddress) && (
+      {(mintTx || tokenAddress || depositTx) && (
         <div style={{ marginTop: 12 }}>
           {mintTx && (
             <div>
@@ -340,6 +469,14 @@ export default function UploadPage() {
               <strong>Token Address:</strong>{" "}
               <a href={`https://explorer.oasis.io/testnet/sapphire/address/${tokenAddress}`} target="_blank" rel="noreferrer">
                 {tokenAddress}
+              </a>
+            </div>
+          )}
+          {depositTx && (
+            <div style={{ marginTop: 6 }}>
+              <strong>Deposit Tx:</strong>{" "}
+              <a href={`https://explorer.oasis.io/testnet/sapphire/tx/${depositTx}`} target="_blank" rel="noreferrer">
+                {depositTx}
               </a>
             </div>
           )}
