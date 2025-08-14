@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { BrowserProvider, Contract, Interface, ZeroAddress, isAddress } from "ethers";
 
 const SAPPHIRE_TESTNET = {
@@ -9,12 +9,11 @@ const SAPPHIRE_TESTNET = {
   blockExplorerUrls: ["https://explorer.oasis.io/testnet/sapphire"],
 };
 
-// Factory address (env first, then fallback)
 const FACTORY_ADDRESS =
   process.env.NEXT_PUBLIC_FACTORY_ADDRESS ||
   "0x00cAe9ED35dCdf0F5C14c5EC11797E8c4d3dBB52";
 
-// Minimal ABI for your PropertyTokenFactory
+// Minimal PropertyTokenFactory ABI
 const FACTORY_ABI = [
   { inputs: [], name: "AlreadyMinted", type: "error" },
   { inputs: [], name: "InvalidHexString", type: "error" },
@@ -56,6 +55,7 @@ export default function UploadPage() {
   const [loading, setLoading] = useState(true);
   const [ids, setIds] = useState([]);
   const [idHex, setIdHex] = useState("");
+  const [owner, setOwner] = useState(""); // NEW: connected wallet
   const [housingValue, setHousingValue] = useState("");
   const [files, setFiles] = useState([]);
   const [status, setStatus] = useState("");
@@ -122,7 +122,16 @@ export default function UploadPage() {
     }
   }
 
-  async function mintAndPersistToken(idHex6) {
+  async function getConnectedAddress() {
+    const provider = new BrowserProvider(window.ethereum);
+    await provider.send("eth_requestAccounts", []);
+    const signer = await provider.getSigner();
+    const addr = await signer.getAddress();
+    setOwner(addr);
+    return { provider, signer, addr };
+  }
+
+  async function mintAndPersistToken(idHex6, addr) {
     setStatus("Minting ERC20 (100 tokens)...");
     setMintTx("");
     setTokenAddress("");
@@ -131,23 +140,23 @@ export default function UploadPage() {
     await provider.send("eth_requestAccounts", []);
     const signer = await provider.getSigner();
 
-    // Optional: check if already minted
+    // Check if already minted
     try {
       const read = new Contract(FACTORY_ADDRESS, FACTORY_ABI, provider);
       const existing = await read.tokenOf(idHex6);
       if (existing && existing !== ZeroAddress) {
         setStatus("Token already exists for this ID. Skipping mint.");
         setTokenAddress(existing);
-        // Update id.json with existing address
+        // Update id.json with existing address + owner
         await fetch("/api/upload", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ idHex: idHex6, tokenAddress: existing }),
+          body: JSON.stringify({ idHex: idHex6, tokenAddress: existing, owner: addr }),
         });
         return existing;
       }
     } catch {
-      // ignore; proceed to mint
+      // continue
     }
 
     const factory = new Contract(FACTORY_ADDRESS, FACTORY_ABI, signer);
@@ -155,14 +164,14 @@ export default function UploadPage() {
     setMintTx(tx.hash);
     const receipt = await tx.wait();
 
-    // Try mapping first
+    // Try mapping
     let mintedAddr = ZeroAddress;
     try {
       const read = new Contract(FACTORY_ADDRESS, FACTORY_ABI, provider);
       mintedAddr = await read.tokenOf(idHex6);
     } catch {}
 
-    // Fallback to parsing the event
+    // Fallback: parse event
     if (!mintedAddr || mintedAddr === ZeroAddress) {
       try {
         const iface = new Interface(FACTORY_ABI);
@@ -184,12 +193,12 @@ export default function UploadPage() {
 
     setTokenAddress(mintedAddr);
 
-    // Persist token address into id.json
+    // Persist token address + owner
     setStatus("Saving token address to id.json…");
     const r = await fetch("/api/upload", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ idHex: idHex6, tokenAddress: mintedAddr }),
+      body: JSON.stringify({ idHex: idHex6, tokenAddress: mintedAddr, owner: addr }),
     });
     if (!r.ok) throw new Error(await r.text());
 
@@ -205,14 +214,19 @@ export default function UploadPage() {
     }
 
     try {
-      setStatus("Uploading…");
+      setStatus("Preparing wallet…");
       setResult(null);
       setError("");
       setMintTx("");
       setTokenAddress("");
 
+      await ensureSapphire();
+      const { addr } = await getConnectedAddress();
+
+      setStatus("Uploading…");
       const fd = new FormData();
       fd.append("idHex", idUpper);
+      fd.append("owner", addr); // NEW
       fd.append("housingValue", housingValue.trim());
       for (const f of files.slice(0, 3)) fd.append("images", f);
 
@@ -221,10 +235,9 @@ export default function UploadPage() {
       const data = await res.json();
       setResult(data);
 
-      // Auto-mint AFTER files/values are saved
-      setStatus("Preparing to mint…");
-      await ensureSapphire();
-      await mintAndPersistToken(idUpper);
+      // Auto-mint AFTER save
+      setStatus("Minting token…");
+      await mintAndPersistToken(idUpper, addr);
 
       // refresh IDs
       loadIds();
@@ -241,13 +254,18 @@ export default function UploadPage() {
       <p style={{ marginTop: 0, opacity: 0.8 }}>
         Select a property ID from <code>data/id.json</code>, upload up to <strong>3 images</strong>,
         and/or enter a housing value. Images are saved under <code>/img/&lt;ID&gt;/filename</code>.
-        After saving, this page will automatically mint a 100-supply ERC-20 with name/symbol = the 6-hex ID, and store its address in <code>data/id.json</code>.
+        After saving, this page auto-mints a 100-supply ERC-20 (name/symbol = the 6-hex ID) and stores its address and your wallet as <code>owner</code> in <code>data/id.json</code>.
       </p>
 
       <div style={{ margin: "12px 0" }}>
         <button onClick={loadIds} disabled={loading}>
           {loading ? "Refreshing…" : "Refresh IDs"}
         </button>
+        {owner && (
+          <span style={{ marginLeft: 12, opacity: 0.8 }}>
+            <strong>Owner (wallet):</strong> {owner}
+          </span>
+        )}
       </div>
 
       {error && (
@@ -331,6 +349,7 @@ export default function UploadPage() {
       {result && (
         <div style={{ marginTop: 12 }}>
           <div><strong>Saved ID:</strong> {result.idHex}</div>
+          {result.owner && <div><strong>Owner:</strong> {result.owner}</div>}
           {result.housingValue && (
             <div><strong>Housing Value:</strong> {result.housingValue}</div>
           )}

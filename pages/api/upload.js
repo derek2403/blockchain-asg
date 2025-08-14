@@ -3,14 +3,13 @@ import fs from "fs/promises";
 import path from "path";
 
 export const config = {
-  api: { bodyParser: false }, // we handle multipart via formidable; JSON for PUT is fine (we’ll sniff method)
+  api: { bodyParser: false }, // multipart via formidable; JSON for PUT handled manually
 };
 
 const ID_FILE = path.join(process.cwd(), "data", "id.json");
-// Save under /img/<ID>/<filename>
 const IMG_ROOT = path.join(process.cwd(), "img");
 
-// -------------- helpers --------------
+// ---------- helpers ----------
 async function ensureIdFile() {
   try {
     await fs.access(ID_FILE);
@@ -31,10 +30,10 @@ async function readEntries() {
   }
   if (!Array.isArray(arr)) arr = [];
 
-  // Normalize legacy shapes
+  // Normalize: legacy shapes -> full object with owner/tokenAddress
   const norm = arr.map((x) => {
     if (typeof x === "string") {
-      return { idHex: x.toUpperCase(), images: [], housingValue: "", tokenAddress: "" };
+      return { idHex: x.toUpperCase(), images: [], housingValue: "", tokenAddress: "", owner: "" };
     }
     return {
       idHex: String(x?.idHex || x?.id || "").toUpperCase(),
@@ -44,10 +43,10 @@ async function readEntries() {
           ? String(x.housingValue)
           : "",
       tokenAddress: typeof x?.tokenAddress === "string" ? x.tokenAddress : "",
+      owner: typeof x?.owner === "string" ? x.owner : "",
     };
   });
 
-  // Keep only valid ids
   return norm.filter((e) => /^[0-9A-F]{6}$/.test(e.idHex));
 }
 
@@ -75,7 +74,7 @@ function isHexAddress(s = "") {
   return /^0x[0-9a-fA-F]{40}$/.test(s);
 }
 
-// -------------- handler --------------
+// ---------- handler ----------
 export default async function handler(req, res) {
   try {
     if (req.method === "GET") {
@@ -83,7 +82,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ properties: entries });
     }
 
-    // Update tokenAddress only (client calls this after mint)
+    // Update tokenAddress (and optionally owner) after mint
     if (req.method === "PUT") {
       const body = await new Promise((resolve, reject) => {
         let data = "";
@@ -99,25 +98,26 @@ export default async function handler(req, res) {
 
       const idHex = String(body.idHex || "").toUpperCase().trim();
       const tokenAddress = String(body.tokenAddress || "").trim();
+      const owner = String(body.owner || "").trim();
 
       if (!/^[0-9A-F]{6}$/.test(idHex)) {
         return res.status(400).json({ error: "idHex must be 6 hex digits (e.g., A1B2C3)" });
       }
-      if (!isHexAddress(tokenAddress)) {
+      if (tokenAddress && !isHexAddress(tokenAddress)) {
         return res.status(400).json({ error: "tokenAddress must be a valid hex address" });
       }
 
       const entries = await readEntries();
       let entry = entries.find((e) => e.idHex === idHex);
       if (!entry) {
-        // create minimal entry if not exists
-        entry = { idHex, images: [], housingValue: "", tokenAddress };
+        entry = { idHex, images: [], housingValue: "", tokenAddress: "", owner: "" };
         entries.push(entry);
-      } else {
-        entry.tokenAddress = tokenAddress;
       }
+      if (tokenAddress) entry.tokenAddress = tokenAddress;
+      if (owner) entry.owner = owner;
+
       await writeEntries(entries);
-      return res.status(200).json({ ok: true, idHex, tokenAddress });
+      return res.status(200).json({ ok: true, idHex, tokenAddress: entry.tokenAddress, owner: entry.owner });
     }
 
     if (req.method === "POST") {
@@ -128,38 +128,36 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "idHex must be 6 hex digits (e.g., A1B2C3)" });
       }
       const housingValue = String(fields.housingValue || "").trim();
+      const owner = String(fields.owner || "").trim(); // NEW
 
       // Collect up to 3 images
       let list = [];
-      if (files.images) {
-        list = Array.isArray(files.images) ? files.images : [files.images];
-      }
+      if (files.images) list = Array.isArray(files.images) ? files.images : [files.images];
       if (list.length > 3) list = list.slice(0, 3);
 
-      // Read & normalize current entries
+      // Read current entries
       const entries = await readEntries();
       let entry = entries.find((e) => e.idHex === idHex);
       if (!entry) {
-        entry = { idHex, images: [], housingValue: "", tokenAddress: "" };
+        entry = { idHex, images: [], housingValue: "", tokenAddress: "", owner: "" };
         entries.push(entry);
       }
 
-      // Save images to /img/<ID>/<filename>
+      // Save images under /img/<ID>/<filename>
       await fs.mkdir(path.join(IMG_ROOT, idHex), { recursive: true });
       const savedPaths = [];
-
       for (const f of list) {
         const orig = sanitizeFilename(f.originalFilename || "image");
         const filename = `${Date.now()}_${orig}`;
         const destPath = path.join(IMG_ROOT, idHex, filename);
         await fs.copyFile(f.filepath, destPath);
-
         const rel = `/img/${idHex}/${filename}`;
         entry.images.push(rel);
         savedPaths.push(rel);
       }
 
       if (housingValue) entry.housingValue = housingValue;
+      if (owner) entry.owner = owner; // NEW: persist connected wallet
 
       await writeEntries(entries);
 
@@ -169,6 +167,7 @@ export default async function handler(req, res) {
         saved: savedPaths,
         housingValue: entry.housingValue,
         tokenAddress: entry.tokenAddress || "",
+        owner: entry.owner || "",
       });
     }
 
