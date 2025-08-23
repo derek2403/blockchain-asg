@@ -1,5 +1,11 @@
 // pages/menu.js
 import { useEffect, useMemo, useState } from "react";
+import {
+  BrowserProvider,
+  Contract,
+  formatUnits,
+  isAddress,
+} from "ethers";
 
 /** ---------- helpers ---------- */
 function parsePlaintext(s) {
@@ -25,6 +31,82 @@ function tokensPerTESTFromHV(hv) {
   return 1_000_000 / n;
 }
 
+/** ---------- blockchain config ---------- */
+const SAPPHIRE_TESTNET = {
+  chainId: "0x5aff", // 23295
+  chainName: "Oasis Sapphire Testnet",
+  nativeCurrency: { name: "Sapphire Test ROSE", symbol: "TEST", decimals: 18 },
+  rpcUrls: ["https://testnet.sapphire.oasis.io"],
+  blockExplorerUrls: ["https://explorer.oasis.io/testnet/sapphire"],
+};
+
+const VAULT_ADDRESS = "0xe7533E80B13e34092873257Af615A0A72a3A8367";
+
+const VAULT_ABI = [
+  {
+    inputs: [
+      {
+        internalType: "address",
+        name: "token",
+        type: "address"
+      }
+    ],
+    name: "getListing",
+    outputs: [
+      {
+        internalType: "address",
+        name: "owner",
+        type: "address"
+      },
+      {
+        internalType: "uint8",
+        name: "decimals_",
+        type: "uint8"
+      },
+      {
+        internalType: "uint256",
+        name: "housingValue",
+        type: "uint256"
+      },
+      {
+        internalType: "uint256",
+        name: "remainingUnits",
+        type: "uint256"
+      },
+      {
+        internalType: "bool",
+        name: "active",
+        type: "bool"
+      }
+    ],
+    stateMutability: "view",
+    type: "function"
+  },
+  {
+    inputs: [
+      {
+        internalType: "uint256",
+        name: "amountTokens",
+        type: "uint256"
+      },
+      {
+        internalType: "uint256",
+        name: "priceWei",
+        type: "uint256"
+      },
+      {
+        internalType: "address",
+        name: "ownerAddress",
+        type: "address"
+      }
+    ],
+    name: "buyToken",
+    outputs: [],
+    stateMutability: "payable",
+    type: "function"
+  }
+];
+
 export default function MenuPage() {
   const [loading, setLoading] = useState(true);
   const [propsData, setPropsData] = useState([]);
@@ -33,6 +115,55 @@ export default function MenuPage() {
   // modal
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(null);
+
+  // token balances - stores tokenAddress -> {remainingUnits, active, owner, housingValue}
+  const [tokenBalances, setTokenBalances] = useState({});
+
+  // buy state
+  const [buying, setBuying] = useState(false);
+  const [buyAmount, setBuyAmount] = useState("10");
+
+  const loadTokenBalances = async (properties) => {
+    try {
+      if (typeof window === "undefined" || !window.ethereum) return;
+      
+      const provider = new BrowserProvider(window.ethereum);
+      const vault = new Contract(VAULT_ADDRESS, VAULT_ABI, provider);
+      
+      const balances = {};
+      
+      // Fetch token balances for each property that has a tokenAddress
+      await Promise.all(
+        properties.map(async (prop) => {
+          if (!isAddress(prop.tokenAddress)) return;
+          
+          try {
+            const listing = await vault.getListing(prop.tokenAddress);
+            balances[prop.tokenAddress] = {
+              owner: listing.owner,
+              decimals: Number(listing.decimals_),
+              housingValue: listing.housingValue.toString(),
+              remainingUnits: listing.remainingUnits.toString(),
+              active: Boolean(listing.active),
+            };
+          } catch (e) {
+            console.warn(`Failed to fetch listing for ${prop.tokenAddress}:`, e);
+            balances[prop.tokenAddress] = {
+              owner: "",
+              decimals: 18,
+              housingValue: "0",
+              remainingUnits: "0",
+              active: false,
+            };
+          }
+        })
+      );
+      
+      setTokenBalances(balances);
+    } catch (e) {
+      console.error("Failed to load token balances:", e);
+    }
+  };
 
   const load = async () => {
     try {
@@ -43,6 +174,9 @@ export default function MenuPage() {
       const data = await res.json();
       const list = Array.isArray(data?.properties) ? data.properties : [];
       setPropsData(list);
+      
+      // Load token balances
+      await loadTokenBalances(list);
     } catch (e) {
       console.error(e);
       setError(e.message || String(e));
@@ -54,6 +188,60 @@ export default function MenuPage() {
   useEffect(() => {
     load();
   }, []);
+
+  const buyTokens = async (property) => {
+    try {
+      if (!property.tokenAddress || !isAddress(property.tokenAddress)) {
+        throw new Error("Invalid token address");
+      }
+      
+      const listing = tokenBalances[property.tokenAddress];
+      if (!listing || !listing.active) {
+        throw new Error("No active listing found for this property");
+      }
+
+      const buyAmt = (buyAmount || "").trim();
+      if (!/^\d+(\.\d+)?$/.test(buyAmt)) throw new Error("Enter a numeric amount to buy");
+
+      const amountTokens = parseInt(buyAmt);
+      if (amountTokens <= 0 || amountTokens > 100) throw new Error("Amount must be between 1 and 100 whole tokens");
+
+      const ownerForBuy = isAddress(listing.owner) ? listing.owner : null;
+      if (!ownerForBuy) throw new Error("Owner unknown; cannot proceed with buy");
+
+      // Calculate price using the contract formula: (housingValue * 1e18 * amountTokens) / 1_000_000
+      const housingValue = BigInt(listing.housingValue);
+      const priceWei = (housingValue * BigInt(1e18) * BigInt(amountTokens)) / BigInt(1_000_000);
+      
+      if (priceWei <= 0n) throw new Error("Calculated price is 0; check listing housingValue");
+
+      setBuying(true);
+      setError("");
+
+      const provider = new BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+
+      const vault = new Contract(VAULT_ADDRESS, VAULT_ABI, signer);
+      
+      const tx = await vault.buyToken(amountTokens, priceWei, ownerForBuy, {
+        value: priceWei,
+      });
+      
+      const receipt = await tx.wait();
+      
+      setError(`✅ Purchased ${amountTokens} tokens! Tx: ${receipt.hash}`);
+      
+      // Refresh token balances
+      await loadTokenBalances(propsData);
+      
+    } catch (e) {
+      console.error(e);
+      const msg = e?.info?.error?.message || e?.shortMessage || e?.reason || e?.message || String(e);
+      setError(`❌ ${msg}`);
+    } finally {
+      setBuying(false);
+    }
+  };
 
   const styled = {
     page: {
@@ -90,6 +278,10 @@ export default function MenuPage() {
     label: { fontWeight: 600, color: "#374151" },
     closeBtn: { border: 0, background: "transparent", color: "white", fontWeight: 700, fontSize: 18, cursor: "pointer" },
     refreshBtn: { background: "#111827", color: "white", border: 0, padding: "8px 14px", borderRadius: 8, fontWeight: 600, cursor: "pointer", marginBottom: 12 },
+    tokenBalance: { fontSize: 12, color: "#059669", marginTop: 4, fontWeight: 600 },
+    buySection: { marginTop: 12, padding: 12, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" },
+    buyInput: { width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #d1d5db", marginBottom: 8 },
+    buyBtn: { background: "#059669", color: "white", border: 0, padding: "8px 12px", borderRadius: 6, fontWeight: 600, cursor: "pointer", width: "100%" },
     status: { marginTop: 8, color: "#dc2626", fontWeight: 600 },
   };
 
@@ -114,7 +306,6 @@ export default function MenuPage() {
         <button onClick={load} disabled={loading} style={styled.refreshBtn}>
           {loading ? "Refreshing…" : "Refresh"}
         </button>
-
         {error && <div style={styled.status}>{error}</div>}
         {!loading && !error && propsData.length === 0 && <p>No properties found yet.</p>}
 
@@ -129,6 +320,12 @@ export default function MenuPage() {
                 encodeURIComponent(
                   `<svg xmlns='http://www.w3.org/2000/svg' width='600' height='360'><rect width='100%' height='100%' fill='#f3f4f6'/><text x='50%' y='50%' fill='#9ca3af' font-family='Inter,system-ui' font-size='20' text-anchor='middle' dominant-baseline='middle'>No image</text></svg>`
                 );
+
+            // Get token balance info
+            const balance = tokenBalances[p.tokenAddress];
+            const remainingTokens = balance && balance.remainingUnits 
+              ? formatUnits(BigInt(balance.remainingUnits), balance.decimals || 18)
+              : "0";
 
             return (
               <article
@@ -145,6 +342,12 @@ export default function MenuPage() {
                   <div style={styled.price}>
                     <b>{id}/TEST:</b> {displayPrice}
                   </div>
+                  {balance && (
+                    <div style={styled.tokenBalance}>
+                      Available: {Number(remainingTokens).toFixed(2)} tokens
+                      {balance.active ? " 🟢" : " 🔴"}
+                    </div>
+                  )}
                 </div>
               </article>
             );
@@ -256,6 +459,76 @@ export default function MenuPage() {
                     </>
                   )}
                 </div>
+
+                {/* Buy Section */}
+                {active.tokenAddress && tokenBalances[active.tokenAddress] && (
+                  <div style={styled.buySection}>
+                    <h4 style={{ margin: "0 0 8px 0", color: "#374151" }}>Purchase Tokens</h4>
+                    
+                    {(() => {
+                      const balance = tokenBalances[active.tokenAddress];
+                      const remainingTokens = balance.remainingUnits 
+                        ? formatUnits(BigInt(balance.remainingUnits), balance.decimals || 18)
+                        : "0";
+                      
+                      return (
+                        <>
+                          <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 8 }}>
+                            Available: {Number(remainingTokens).toFixed(2)} tokens
+                            {balance.active ? " (Active)" : " (Inactive)"}
+                          </div>
+                          
+                          {balance.active ? (
+                            <>
+                              <input
+                                type="number"
+                                min="1"
+                                max="100"
+                                step="1"
+                                value={buyAmount}
+                                onChange={(e) => setBuyAmount(e.target.value)}
+                                placeholder="Amount to buy (1-100)"
+                                style={styled.buyInput}
+                              />
+                              
+                              {(() => {
+                                try {
+                                  const amountTokens = parseInt(buyAmount || "0");
+                                  if (amountTokens > 0 && amountTokens <= 100) {
+                                    const housingValue = BigInt(balance.housingValue);
+                                    const priceWei = (housingValue * BigInt(1e18) * BigInt(amountTokens)) / BigInt(1_000_000);
+                                    return (
+                                      <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>
+                                        Price: {formatUnits(priceWei, 18)} TEST
+                                      </div>
+                                    );
+                                  }
+                                  return null;
+                                } catch { return null; }
+                              })()}
+                              
+                              <button 
+                                onClick={() => buyTokens(active)}
+                                disabled={buying || !buyAmount || parseInt(buyAmount) <= 0}
+                                style={{
+                                  ...styled.buyBtn,
+                                  opacity: (buying || !buyAmount || parseInt(buyAmount) <= 0) ? 0.6 : 1,
+                                  cursor: (buying || !buyAmount || parseInt(buyAmount) <= 0) ? "not-allowed" : "pointer"
+                                }}
+                              >
+                                {buying ? "Purchasing..." : "Buy Tokens"}
+                              </button>
+                            </>
+                          ) : (
+                            <div style={{ fontSize: 13, color: "#dc2626" }}>
+                              This property is not available for purchase
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
               </div>
             </div>
           </div>

@@ -90,6 +90,12 @@ export default async function handler(req, res) {
     const contract = new Contract(CONTRACT_ADDRESS, ABI, encProvider);
 
     const keyB64 = process.env.ENCRYPTION_KEY_BASE64 || "";
+    // after: const keyB64 = process.env.ENCRYPTION_KEY_BASE64 || "";
+    const rawKey = Buffer.from(keyB64, "base64");
+    console.log(
+      "[getproperty] KEY_LEN:", rawKey.length,
+      "KEY_SHA256_8:", crypto.createHash("sha256").update(rawKey).digest("hex").slice(-8)
+    );
 
     const results = await Promise.all(
       entries.map(async (e) => {
