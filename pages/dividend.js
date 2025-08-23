@@ -14,7 +14,7 @@ export default function DividendPage() {
   const [tokenInfo, setTokenInfo] = useState(null); // {tokenAddress, owner, housingValue}
   const [holders, setHolders] = useState([]); // [{address, balance, percentage}]
   const [distributing, setDistributing] = useState(false);
-  const [testResult, setTestResult] = useState(null);
+
 
   const idUpper = (idHex || "").trim().toUpperCase();
   const idLooksValid = /^[0-9A-F]{6}$/.test(idUpper);
@@ -122,21 +122,7 @@ export default function DividendPage() {
     }
   };
 
-  const testDistribution = async () => {
-    try {
-      setTestResult("Testing distribution system...");
-      
-      const res = await fetch("/api/dividend/test");
-      if (!res.ok) throw new Error(await res.text());
-      
-      const result = await res.json();
-      setTestResult(result);
-      
-    } catch (e) {
-      console.error("Test failed:", e);
-      setTestResult({ error: e.message });
-    }
-  };
+
 
   const styled = {
     page: {
@@ -361,27 +347,7 @@ export default function DividendPage() {
           </div>
         )}
 
-        {/* Test Section */}
-        <div style={styled.card}>
-          <h3 style={{ margin: "0 0 16px 0", color: "#111827" }}>Debug & Test</h3>
-          <button onClick={testDistribution} style={styled.button}>
-            Test Distribution System
-          </button>
-          
-          {testResult && (
-            <div style={{ 
-              marginTop: 16, 
-              padding: 12, 
-              background: "#f9fafb", 
-              borderRadius: 8, 
-              border: "1px solid #e5e7eb",
-              fontSize: 12,
-              fontFamily: "monospace"
-            }}>
-              <pre>{JSON.stringify(testResult, null, 2)}</pre>
-            </div>
-          )}
-        </div>
+
 
         {/* Status Messages */}
         {error && (
