@@ -6,26 +6,35 @@ export default function Header() {
     <header className="bg-white shadow-sm border-b border-gray-200">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
-          {/* Left - Logo placeholder */}
+          {/* Left - Logo */}
           <div className="flex-shrink-0">
-            <div className="h-8 w-32 bg-gray-300 rounded flex items-center justify-center">
-              <span className="text-gray-600 text-sm font-medium">LOGO</span>
+            <div className="h-8 w-40 flex items-center justify-center">
+              <span 
+                className="text-gray-800 text-lg font-bold"
+                style={{
+                  fontFamily: "'Courier New', monospace",
+                  letterSpacing: "0.1em",
+                  textShadow: "2px 2px 4px rgba(0,0,0,0.1)"
+                }}
+              >
+                Blocks of Bricks
+              </span>
             </div>
           </div>
 
           {/* Middle - Navigation */}
           <nav className="hidden md:flex space-x-8">
             <Link 
-              href="/list" 
+              href="/menu" 
+              className="text-gray-700 hover:text-blue-600 px-3 py-2 text-sm font-medium transition-colors"
+            >
+              Menu
+            </Link>
+            <Link 
+              href="/property-flow" 
               className="text-gray-700 hover:text-blue-600 px-3 py-2 text-sm font-medium transition-colors"
             >
               List
-            </Link>
-            <Link 
-              href="/buy" 
-              className="text-gray-700 hover:text-blue-600 px-3 py-2 text-sm font-medium transition-colors"
-            >
-              Buy
             </Link>
             <Link 
               href="/trade" 
@@ -34,10 +43,10 @@ export default function Header() {
               Trade
             </Link>
             <Link 
-              href="/dashboard" 
+              href="/dividend" 
               className="text-gray-700 hover:text-blue-600 px-3 py-2 text-sm font-medium transition-colors"
             >
-              Dashboard
+              Dividend
             </Link>
           </nav>
 

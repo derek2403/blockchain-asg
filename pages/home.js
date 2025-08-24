@@ -10,7 +10,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!isConnected) {
-      router.push('/login');
+      router.push('/');
       return;
     }
 
@@ -27,12 +27,12 @@ export default function Home() {
         if (data.exists) {
           setUserData(data.user);
         } else {
-          router.push('/login');
+          router.push('/');
           return;
         }
       } catch (error) {
         console.error('Error checking user:', error);
-        router.push('/login');
+        router.push('/');
         return;
       } finally {
         setLoading(false);
