@@ -1,40 +1,67 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/pages/api-reference/create-next-app).
+# Real Estate Fractionalization dApp
+
+A decentralized application that enables fractional ownership of real estate properties through blockchain tokenization. Built with Next.js and deployed on Oasis Sapphire testnet.
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
+- Node.js (v16 or higher)
+- A Web3 wallet (MetaMask recommended)
+- Oasis Sapphire testnet ROSE tokens for gas fees
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+### Installation
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+1. **Navigate to the root directory**
+   ```bash
+   cd blockchain-asg
+   ```
 
-You can start editing the page by modifying `pages/index.js`. The page auto-updates as you edit the file.
+2. **Install dependencies**
+   ```bash
+   npm install
+   ```
 
-[API routes](https://nextjs.org/docs/pages/building-your-application/routing/api-routes) can be accessed on [http://localhost:3000/api/hello](http://localhost:3000/api/hello). This endpoint can be edited in `pages/api/hello.js`.
+3. **Create environment file**
+   Create a `.env` file in the root directory with the following variables:
+   ```env
+   GEMINI_API_KEY=your_gemini_api_key_here
+   ENCRYPTION_KEY_BASE64=your_encryption_key_here
+   PRIVATEKEY=your_wallet_private_key_here
+   ```
 
-The `pages/api` directory is mapped to `/api/*`. Files in this directory are treated as [API routes](https://nextjs.org/docs/pages/building-your-application/routing/api-routes) instead of React pages.
+4. **Generate encryption key**
+   Run the following command to generate your encryption key:
+   ```bash
+   node AESKey.js
+   ```
+   Copy the generated key and paste it as `ENCRYPTION_KEY_BASE64` in your `.env` file.
 
-This project uses [`next/font`](https://nextjs.org/docs/pages/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+5. **Start the development server**
+   ```bash
+   npm run dev
+   ```
 
-## Learn More
+6. **Open the application**
+   Navigate to [http://localhost:3000](http://localhost:3000) in your browser.
 
-To learn more about Next.js, take a look at the following resources:
+## Features
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn-pages-router) - an interactive Next.js tutorial.
+- **User Registration**: AI-powered IC document verification
+- **Property Listing**: Tokenize real estate into 100 fractional shares
+- **Trading Platform**: Buy and sell property tokens
+- **Dividend Distribution**: Distribute earnings to token holders
+- **Blockchain Integration**: Secure data storage on Oasis Sapphire
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Smart Contracts
 
-## Deploy on Vercel
+- **PropertyTokenFactory**: Mints ERC20 tokens for properties
+- **TokenEscrow**: Manages peer-to-peer token trading
+- **PropertyTokenVault**: Handles direct token purchases
+- **ConfidentialStrings**: Stores encrypted property metadata
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Network
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/pages/building-your-application/deploying) for more details.
+This dApp runs on **Oasis Sapphire Testnet**:
+- Chain ID: 23295 (0x5aff)
+- RPC URL: https://testnet.sapphire.oasis.io
+- Explorer: https://explorer.oasis.io/testnet/sapphire
